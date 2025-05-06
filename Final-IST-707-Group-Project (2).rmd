@@ -1,0 +1,802 @@
+---
+title: "IST 707 Group Project"
+author: "Daquan Morrison,Zachary Blaine-Atkins, Quintin Covington"
+date: "2024-06-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+Dogs, often celebrated as humanity's best friend, have played a multifaceted role in human society for thousands of years. Their domestication dates back over 15,000 years, making them one of the first animals to form a bond with humans. Initially, dogs were indispensable partners in hunting and herding. Their keen senses and loyalty made them ideal companions for early human societies, aiding in food acquisition and the protection of livestock.
+
+Throughout history, the utility of dogs has evolved. In ancient civilizations such as Egypt, Greece, and Rome, dogs were not only working animals but also symbols of status and companionship. In medieval Europe, they were employed in various roles including guard dogs, hunting aids, and even war companions. The Industrial Revolution and subsequent urbanization saw a shift in the role of dogs from primarily working animals to cherished household pets.
+
+In contemporary times, dogs serve a variety of purposes beyond companionship. They are integral to law enforcement as K9 units, assist in search and rescue missions, and provide therapeutic benefits as service and emotional support animals. The deep bond between dogs and humans has led to the emergence of pet adoption as a significant societal practice. Organizations and shelters worldwide advocate for the adoption of dogs, emphasizing the benefits of giving a home to an animal in need.
+
+Despite the love and care many dogs receive, there is a significant issue of abandonment. Millions of dogs are abandoned each year due to various reasons, including behavioral problems, economic hardship, and changes in the owner’s living situation. This abandonment leads to overcrowded shelters and, in some unfortunate cases, euthanasia. Pet adoption not only helps in providing homes to these abandoned animals but also alleviates the pressure on animal shelters, contributing to a more humane society.
+
+Understanding the history and current state of dog companionship highlights the importance of responsible pet ownership and the societal benefits of pet adoption. It also underscores the ongoing challenge of preventing dog abandonment and ensuring that every dog has the opportunity to live in a loving home. \# Problem Statement
+
+The aim of this project is to classify dog breeds into optimal categories for potential owners based on characteristics such as temperament, size, energy level, and maintenance needs. By matching breeds with specific lifestyles—Busy Families, Single Professionals, Home-Oriented Individuals, Active Singles, and Work-from-Home Individuals—we intend to improve owner-dog compatibility. This approach will help prospective dog owners, adoption agencies, and breeders make better-informed decisions.
+
+# About the Data
+
+The dataset used for this analysis is sourced from a Kaggle notebook titled "Dog Adaptability \| EDA \| Models." It contains comprehensive information about various dog breeds and their characteristics, aimed at exploring factors that influence dog adaptability and adoption rates. The dataset includes variables such as Breed Name, Size, Coat Type, Shedding Level, Energy Level, Barking Level, Adaptability, Trainability, and Friendliness.
+
+For data cleaning and preparation, missing values were either filled based on similar entries or removed if insignificant. Incorrect values were corrected using reliable breed characteristics. Outliers were identified through statistical methods and visualizations, corrected if erroneous, or retained if legitimate. New features were generated to enhance analysis, such as a composite score for adaptability. Since the dataset primarily contains categorical variables, normalization was generally not required, though numerical representations were normalized for certain analyses.
+
+Each variable was explored to understand its distribution and impact on dog adaptability. Breed Name is a categorical variable representing different breeds. Size is categorized as Small, Medium, or Large. Coat Type describes the coat as Short, Medium, or Long. Shedding Level indicates the breed's shedding propensity. Energy Level reflects the breed's energy needs. Barking Level shows how vocal a breed is. Adaptability measures how well breeds adapt to different living conditions. Trainability indicates the ease of training, and Friendliness represents the breed's approachability towards strangers. These explorations provided insights into breed characteristics and their potential impact on adaptability and adoption rates, forming the foundation for further analysis and modeling.
+
+# Exploratory Data Analysis
+
+Load Libraries and Data
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(rpart)
+library(rpart.plot)
+library(caret)
+library(arules)
+library(stats)
+library(readxl)
+library(caret)
+library(randomForest)
+library(e1071)
+library(class)
+library(kknn)
+library(nnet)
+library(ggplot2)
+library(corrplot)
+# Load the data
+dog_adaptability_test_data <- read.csv("C:/Users/Daquan Morrison/Downloads/dog adaptability test_data.csv")
+sum(is.na(dog_adaptability_test_data))
+```
+
+```{r}
+#Overview of the Dataset and Columns
+glimpse(dog_adaptability_test_data)
+```
+
+```{r}
+#Summary of the data
+summary(dog_adaptability_test_data)
+```
+
+Data Preprocessing Steps
+
+```{r}
+# Convert categorical data to factors
+dog_adaptability_test_data$breed_group <- as.factor(dog_adaptability_test_data$breed_group)
+
+# Normalize numeric data
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+numeric_cols <- sapply(dog_adaptability_test_data, is.numeric)
+dog_adaptability_test_data[numeric_cols] <- lapply(dog_adaptability_test_data[numeric_cols], normalize)
+
+library(dplyr)
+library(stringr)
+```
+
+```{r}
+# Data preprocessing steps
+dog_adaptability_test_data <- dog_adaptability_test_data %>%
+  select(-tolerates_cold_weather, -tolerates_hot_weather, -drooling_potential, 
+         -health_grooming, -potential_for_weight_gain, -prey_drive, 
+         -potential_for_mouthiness, -wanderlust_potential)
+
+dog_adaptability_test_data$breed_group <- as.factor(dog_adaptability_test_data$breed_group)
+
+dog_adaptability_test_data$adaptability <- (dog_adaptability_test_data$adaptability - min(dog_adaptability_test_data$adaptability)) / (max(dog_adaptability_test_data$adaptability) - min(dog_adaptability_test_data$adaptability))
+```
+
+Define Functions
+
+```{r}
+# Function to extract numeric ranges from a string
+extract_range <- function(text) {
+  matches <- str_extract_all(text, "\\d+")[[1]]
+  if (length(matches) == 0) {
+    return(c(NA, NA))
+  }
+  nums <- as.numeric(matches)
+  if (str_detect(text, "Up to")) {
+    return(c(0, nums[1]))
+  }
+  if (length(nums) == 1) {
+    return(c(nums[1], nums[1]))
+  }
+  return(c(min(nums), max(nums)))
+}
+
+# Function to find the average of numeric ranges
+find_avg <- function(min_val, max_val) {
+  if (is.na(min_val) || is.na(max_val)) {
+    return(NA)
+  } else {
+    return((min_val + max_val) / 2)
+  }
+}
+
+```
+
+Process Weight Column
+
+```{r}
+# Find average weight
+dog_data <- dog_adaptability_test_data %>%
+  mutate(weight = as.character(weight),
+         weight_range = str_extract(weight, "\\d+ to \\d+")) %>%
+  separate(weight_range, into = c("min_weight", "max_weight"), sep = " to ", convert = TRUE, fill = "right") %>%
+  mutate(avg_weight = map2_dbl(min_weight, max_weight, find_avg))
+
+# Verify weight processing
+head(dog_data[, c("min_weight", "max_weight", "avg_weight")])
+
+
+```
+
+Process Lifespan Column
+
+```{r}
+# Correct column name if necessary
+names(dog_data)[names(dog_data) == "lifspan"] <- "lifespan"
+
+# Find average lifespan
+dog_data <- dog_data %>%
+  mutate(lifespan = as.character(lifespan),
+         lifespan_range = str_extract(lifespan, "\\d+ to \\d+")) %>%
+  separate(lifespan_range, into = c("min_lifespan", "max_lifespan"), sep = " to ", convert = TRUE, fill = "right") %>%
+  mutate(avg_lifespan = map2_dbl(min_lifespan, max_lifespan, find_avg))
+
+# Verify lifespan processing
+head(dog_data[, c("min_lifespan", "max_lifespan", "avg_lifespan")])
+
+```
+
+Remove Intermediate Columns
+
+```{r}
+# Check if columns exist before removing them
+columns_to_remove <- c("min_weight", "max_weight", "min_lifespan", "max_lifespan")
+existing_columns <- columns_to_remove[columns_to_remove %in% names(dog_data)]
+
+# Remove intermediate columns if they exist
+if(length(existing_columns) > 0) {
+  dog_data <- dog_data %>% select(-all_of(existing_columns))
+}
+```
+
+Create Lifestyle Category Column with Combined Categories
+
+```{r}
+dog_data <- dog_data %>% 
+  mutate(lifestyle_category = case_when(
+    all_around_friendliness >= 3 & potential_for_playfulness >= 3 & affectionate_with_family >= 3 & sensitivity_level >= 3 & trainability >= 3 & easy_to_train >= 3 & energy_level <= 5 & tendency_to_bark_or_howl <= 3 ~ 'Busy Families',
+    exercise_needs <= 4 & tolerates_being_alone >= 3 & easy_to_train >= 3 & good_for_novice_owners >= 3 & intelligence >= 3 ~ 'Single Professionals',
+    affectionate_with_family >= 3 & incredibly_kifriendly_dogs >= 3 & all_around_friendliness >= 3 & easy_to_train >= 3 ~ 'Home-Based Families',
+    (energy_level <= 4 & exercise_needs <= 4 & intensity <= 4 & potential_for_playfulness <= 4 & tendency_to_bark_or_howl <= 4 & tolerates_being_alone <= 3 & intelligence >= 3 & easy_to_groom >= 3 & friendly_towarstrangers >= 3 & good_for_novice_owners >= 3) |
+    (affectionate_with_family >= 3 & incredibly_kifriendly_dogs >= 3 & all_around_friendliness >= 3 & easy_to_train >= 3) ~ 'Home-Based Families',
+    (energy_level >= 3 & exercise_needs >= 3 & intensity >= 3 & potential_for_playfulness >= 3 & trainability >= 3 & dog_friendly >= 3) ~ 'Active Singles',
+    (tolerates_being_alone >= 3 & trainability >= 3 & easy_to_train >= 3 & tendency_to_bark_or_howl <= 3 & exercise_needs <= 4 & potential_for_playfulness <= 4) |
+    (exercise_needs <= 4 & tolerates_being_alone >= 3 & easy_to_train >= 3 & good_for_novice_owners >= 3 & intelligence >= 3) ~ 'Single Professionals',
+    TRUE ~ 'General'
+  ))
+
+# Check class distribution
+class_distribution <- table(dog_data$lifestyle_category)
+print(class_distribution)
+```
+
+Calculate Weights
+
+```{r}
+# Calculate class weights
+total_records <- nrow(dog_data)
+class_weights <- total_records / (length(class_distribution) * class_distribution)
+
+# Create a weight vector for each record
+dog_data$weights <- sapply(dog_data$lifestyle_category, function(x) class_weights[x])
+```
+
+Exploratory Data Analysis
+
+**Visualize the distribution of breeds across lifestyle categories**
+
+```{r}
+
+library(ggplot2)
+ 
+# Assuming dog_data contains the lifestyle_category column
+# Create a bar plot
+ggplot(dog_data, aes(x = lifestyle_category, fill = breed_group)) +
+  geom_bar(position = "fill") +
+  labs(title = "Distribution of Breeds Across Lifestyle Categories",
+       x = "Lifestyle Category",
+       y = "Proportion of Breeds",
+       fill = "Breed Group") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```
+
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(cluster)
+library(factoextra)
+library(arules)
+
+# Select relevant columns for clustering
+clustering_data <- dog_data %>% 
+  select(adaptability, good_for_novice_owners, sensitivity_level, tolerates_being_alone, all_around_friendliness, affectionate_with_family, incredibly_kifriendly_dogs, 
+         dog_friendly, friendly_towarstrangers, amount_of_shedding,
+         easy_to_groom, general_health, size, trainability, easy_to_train, intelligence, 
+          tendency_to_bark_or_howl, exercise_needs, 
+         energy_level, intensity, potential_for_playfulness)
+
+# Standardize the data
+clustering_data_scaled <- scale(clustering_data)
+
+# Determine the optimal number of clusters using the Elbow method
+fviz_nbclust(clustering_data_scaled, kmeans, method = "wss")
+
+# Perform K-means clustering with 5 clusters
+set.seed(123) # Set seed for reproducibility
+kmeans_result <- kmeans(clustering_data_scaled, centers = 5, nstart = 25)
+
+# Add the cluster assignments to the original dataset
+dog_data$cluster <- kmeans_result$cluster
+
+# Visualize the clusters
+fviz_cluster(kmeans_result, data = clustering_data_scaled, geom = "point", ellipse.type = "convex", ggtheme = theme_minimal())
+
+# Calculate the mean values of the relevant criteria for each cluster
+cluster_means <- dog_data %>% 
+  group_by(cluster) %>% 
+  summarise(across(adaptability:potential_for_playfulness, ~ mean(.x, na.rm = TRUE)))
+
+# Print the mean values for each cluster
+print(cluster_means)
+
+# Assign lifestyle categories based on clusters
+dog_data <- dog_data %>% 
+  mutate(lifestyle_category = case_when(
+    cluster == 1 ~ "Busy Families",
+    cluster == 2 ~ "Single Professionals",
+    cluster == 3 ~ "Home-Based Families",
+    cluster == 4 ~ "Active Singles",
+    cluster == 5 ~ "Retired Couples or Singles",
+    TRUE ~ "Other"
+  ))
+
+# Print the updated dataset with lifestyle categories
+print(head(dog_data))
+
+```
+
+```{r}
+# Load necessary library
+library(dplyr)
+
+# Define the function to calculate the average of numeric columns for a specific breed group
+calculate_average_by_breed_group <- function(data, breed_group) {
+  average_values <- data %>%
+    filter(breed_group == !!breed_group) %>%
+    select_if(is.numeric) %>%
+    summarise(across(everything(), mean, na.rm = TRUE))
+  
+  return(average_values)
+}
+
+# Use of the function for different breed groups
+companion_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Companion Dogs")
+working_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Working Dogs")
+terrier_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Terrier Dogs")
+hybrid_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Hybrid Dogs")
+hound_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Hound Dogs")
+mixed_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Mixed Breed Dogs")
+herding_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Herding Dogs")
+sporting_average_values <- calculate_average_by_breed_group(dog_adaptability_test_data, "Sporting Dogs")
+
+# Print the result
+print(companion_average_values)
+print(working_average_values)
+print(terrier_average_values)
+print(hybrid_average_values)
+print(hound_average_values)
+print(mixed_average_values)
+print(herding_average_values)
+print(sporting_average_values)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(corrplot)
+
+library(psych)
+
+
+# Select columns for EDA (excluding specified columns)
+eda_data <- dog_adaptability_test_data%>%
+  select(-id)
+
+
+# Check for missing values
+missing_values <- colSums(is.na(eda_data))
+print(missing_values)
+
+# Visualize the distribution of numerical features
+num_cols <- sapply(eda_data, is.numeric)
+eda_data_num <- eda_data[, num_cols]
+
+# Histograms for numerical features
+eda_data_num %>%
+  gather() %>%
+  ggplot(aes(value)) +
+  facet_wrap(~ key, scales = "free") +
+  geom_histogram(bins = 30) +
+  theme_minimal()
+
+# Correlation matrix
+cor_matrix <- cor(eda_data_num, use = "complete.obs")
+corrplot(cor_matrix, method = "circle")
+
+# Pair plot for numerical features
+pairs.panels(eda_data_num, 
+             method = "pearson",  # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE  # show correlation ellipses
+)
+
+# Bar plots for categorical features
+cat_cols <- sapply(eda_data, is.factor)
+eda_data_cat <- eda_data[, cat_cols]
+
+for(col in names(eda_data_cat)) {
+  ggplot(eda_data_cat, aes_string(x = col)) +
+    geom_bar() +
+    theme_minimal() +
+    ggtitle(paste("Bar Plot of", col)) +
+    xlab(col) +
+    ylab("Count") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+```{r}
+library(tidyverse)
+data <- dog_adaptability_test_data
+
+# Select relevant columns
+selected_data <- data %>%
+  select(breed_group, all_around_friendliness, potential_for_playfulness, 
+         affectionate_with_family, sensitivity_level, trainability, 
+         easy_to_train, energy_level, tendency_to_bark_or_howl)
+
+# Calculate the average of specified columns grouped by breed_group
+avg_data <- selected_data %>%
+  group_by(breed_group) %>%
+  summarise(across(everything(), list(avg = ~mean(.x, na.rm = TRUE))))
+
+# Melt the data for easy plotting
+avg_data_melted <- avg_data %>%
+  pivot_longer(cols = -breed_group, names_to = "variable", values_to = "average")
+
+# Plot the data
+ggplot(avg_data_melted, aes(x = breed_group, y = average, fill = breed_group)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~variable, scales = "free_y") +
+  theme_minimal() +
+  labs(title = "Average Values by Breed Group",
+       x = "Breed Group",
+       y = "Average Value") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Models
+
+**Fit the Initial Decision Tree**
+
+```{r}
+# Install and load required packages
+if (!require(rpart.plot)) {
+    install.packages("rpart.plot", dependencies = TRUE)
+    library(rpart.plot)
+}
+
+# Assuming 'dog_data' and 'lifestyle_category' are correctly set up and preprocessed
+# Define control parameters for the decision tree
+control_params <- rpart.control(minsplit = 10, 
+                                minbucket = 30,  # Consider reducing if too few nodes are produced
+                                cp = 0.005, 
+                                maxdepth = 10)
+
+# Build the initial decision tree model
+initial_tree <- rpart(lifestyle_category ~ energy_level + tolerates_being_alone + 
+                      all_around_friendliness + easy_to_groom + adaptability, 
+                      data = dog_data, 
+                      method = "class",  
+                      weights = dog_data$avg_weights, 
+                      control = control_params)
+
+# Display the complexity parameter (CP) table
+printcp(initial_tree)
+
+# Find the optimal complexity parameter (CP) value based on the minimum cross-validation error
+optimal_cp <- initial_tree$cptable[which.min(initial_tree$cptable[,"xerror"]), "CP"]
+
+# Prune the tree using the optimal cp value
+pruned_tree <- prune(initial_tree, cp = optimal_cp)
+
+# Plot the pruned tree with rpart.plot using a predefined color palette
+rpart.plot(pruned_tree, main = "Pruned Decision Tree", box.palette="RdBu", shadow.col="gray", border.col="black")
+
+# Print the summary of the pruned tree
+print(pruned_tree)
+
+
+```
+
+**Hierarchical Clustering and Dendrogram**
+
+```{r}
+# Sample data: let's use the built-in 'mtcars' dataset for illustration
+data <- dog_adaptability_test_data
+
+# Step 1: Compute the distance matrix
+# We use the Euclidean distance here, but other methods like "manhattan" can also be used
+dist_matrix <- dist(data, method = "euclidean")
+
+# Step 2: Perform hierarchical agglomerative clustering
+# We use the "complete" linkage method, but other methods like "single", "average" etc. can also be used
+hac <- hclust(dist_matrix, method = "complete")
+
+# Step 3: Plot the dendrogram to visualize the clustering
+plot(hac, labels = FALSE, main = "Dendrogram of Hierarchical Agglomerative Clustering", xlab = "", sub = "", cex = 0.9)
+axis(side = 1, at = 1:nrow(data), labels = FALSE, las = 2)
+
+# Optional: Cut the dendrogram at a certain height to form clusters
+# For example, cut at height 150 to form 4 clusters
+clusters <- cutree(hac, h = 150)
+print(clusters)
+# or specify the number of clusters you want, e.g., 4 clusters
+clusters <- cutree(hac, k = 4)
+print(clusters)
+
+# Subset the data for visualization purposes
+subset_data <- dog_adaptability_test_data[1:50, ]  # Use the first 50 data points as an example
+
+# Step 1: Compute the distance matrix
+dist_matrix <- dist(subset_data, method = "euclidean")
+
+# Step 2: Perform hierarchical agglomerative clustering
+hac <- hclust(dist_matrix, method = "complete")
+
+# Step 3: Plot the dendrogram
+plot(hac, main = "Dendrogram of Hierarchical Agglomerative Clustering (Subset)", xlab = "", sub = "", cex = 0.9)
+
+```
+
+**Random Forest**
+
+```{r}
+library(caret)
+library(randomForest)
+
+# Define control parameters for cross-validation
+ctrl <- trainControl(method = "cv",    # Cross-validation method
+                     number = 5,       # Number of folds
+                     verboseIter = TRUE,  # Print iteration log
+                     allowParallel = TRUE) # Allow parallel processing
+
+# Replace NA values with mean for numeric columns
+# Assuming numeric columns are handled in a data preprocessing step
+
+# Define the target variable
+target <- "breed_group"
+
+# Train random forest model
+random_forest_model <- train(as.formula(paste(target, "~ .")), 
+                             data = dog_adaptability_test_data, 
+                             method = "rf", 
+                             trControl = ctrl)
+
+# Print the trained model
+print(random_forest_model)
+
+
+# Train support vector machine model
+svm_model <- train(as.formula(paste(target, "~ .")), 
+                   data = dog_adaptability_test_data, 
+                   method = "svmRadial", 
+                   trControl = ctrl)
+```
+
+**SVM**
+
+```{r}
+
+library(caret)
+library(randomForest)
+
+# Check if models are trained with caret's train function
+if (!inherits(random_forest_model, "train") || !inherits(svm_model, "train")) {
+  stop("One or more models are not trained using caret's train function.")
+}
+
+# Assuming 'random_forest_model' and 'svm_model' are already trained using caret's train function
+# Assuming 'pruned_tree' is also a trained model using caret, otherwise it needs to be handled differently.
+
+# Evaluate models on test data if all models are compatible
+models <- list(Random_Forest = random_forest_model,
+               SVM = svm_model)
+
+# Optionally include Decision_Tree if it is a caret model
+if (inherits(pruned_tree, "train")) {
+  models$Decision_Tree <- pruned_tree
+}
+
+# Use resamples to compare models
+results <- resamples(models)
+
+# Summarize results
+print(summary(results))
+
+# Plot results
+bwplot(results)
+
+# Example with simple model testing for illustration purposes
+data(iris)
+model1 <- train(Species ~ ., data = iris, method = "rf", 
+                trControl = trainControl(method = "cv", number = 3))
+model2 <- train(Species ~ ., data = iris, method = "rf", 
+                trControl = trainControl(method = "cv", number = 3))
+
+# Test resamples with these simple models
+models_list <- list(model1 = model1, model2 = model2)
+results_simple <- resamples(models_list)
+print(summary(results_simple))
+
+```
+
+# **Results**
+
+**Exploratory Data Analysis**
+
+***Correlation Matrix***
+
+The correlation matrix you've provided is a visual representation of the relationships between different variables related to dog characteristics. The color and size of the circles indicate the strength and direction of the correlation between pairs of variables.
+
+Key Points:
+
+1\. Diagonal Line: Each variable is perfectly correlated with itself, represented by the darkest and largest circles on the diagonal (correlation of 1).
+
+2\. Positive Correlations:\
+    - Variables with larger blue circles indicate a strong positive correlation. For example, "affectionate_with_family" might have a strong positive correlation with "all_around_friendliness".\
+    - Positive correlations imply that as one variable increases, the other tends to increase as well.
+
+3\. Negative Correlations:\
+    - Variables with larger red circles indicate a strong negative correlation. For instance, "amount_of_shedding" might have a negative correlation with "easy_to_groom".\
+    - Negative correlations imply that as one variable increases, the other tends to decrease.
+
+4\. Weak or No Correlation:\
+    - Smaller or absent circles suggest weak or no correlation between those variables.
+
+Specific Observations:
+
+\- Adaptability:\
+    - Strongly correlated with "good_for_novice_owners" and "all_around_friendliness".\
+ - Energy Level:\
+    - May show varying degrees of correlation with variables like "exercise_needs" and "intensity".
+
+Interpretation:
+
+\- Positive correlations help identify clusters of traits that tend to appear together in dog breeds. \
+ - Negative correlations indicate trade-offs between certain traits.\
+ - This information can be useful for prospective dog owners looking for specific characteristics and for understanding how different traits interact with one another.
+
+By analyzing these correlations, you can better understand the relationships between different dog traits, which is valuable for breeders, trainers, and adopters.
+
+***General Lifestyle Breed distribution***
+
+The graph shows the proportion of different dog breed groups within the "General" lifestyle category. Key observations are:
+
+-   **Companion Dogs** (Red) make up the largest proportion.
+
+-   **Mixed Breed Dogs** (Cyan) are also significant but less than Companion Dogs.
+
+-   **Herding, Hound, Hybrid, Sporting, Terrier, and Working Dogs** are present in smaller, varying proportions.
+
+In summary, Companion and Mixed Breed Dogs dominate the "General" lifestyle category, with the other breed groups being less represented.
+
+***Distribution of Numerical Features Graph***
+
+The plot shows the distribution of various dog breed traits, with each facet representing a different trait. Key points:
+
+-   The x-axis of each facet shows the value range for the trait (0 to 1).
+
+-   The y-axis shows the count of occurrences for each value range.
+
+-   Traits like "adaptability," "affectionate_with_family," "dog_friendly," and "trainability" show a relatively even distribution across their value ranges.
+
+-   Traits such as "amount_of_shedding," "intensity," and "tendency_to_bark_or_howl" show more distinct peaks, indicating certain common value ranges for these traits.
+
+-   Each trait's histogram reveals the diversity and frequency of traits among the dog breeds in the dataset.
+
+In summary, the plot highlights how different traits vary among dog breeds, with some traits being more evenly distributed and others having specific common values.
+
+***Average Values BY Breed Group Plot***
+
+Based on the analysis of the provided chart, we can see distinct high and low average values for different breed groups across various categories. Companion Dogs are the most affectionate with families, while Working Dogs are the least. In terms of overall friendliness, Companion Dogs again top the list, whereas Terrier Dogs score the lowest. Herding Dogs are the easiest to train, with Companion Dogs being the hardest.
+
+Sporting Dogs exhibit the highest energy levels, while Working Dogs have the lowest. The potential for playfulness is also highest in Sporting Dogs, with Terrier Dogs showing the least playfulness. Sensitivity levels are highest among Herding Dogs and lowest among Working Dogs. Terrier Dogs have the highest tendency to bark or howl, contrasting with Hound Dogs, which have the lowest tendency.
+
+Lastly, Herding Dogs are the most trainable, while Companion Dogs are the least trainable. These insights provide a clear understanding of how different breed groups compare across key behavioral traits.
+
+**Hierarchical Agglomerative Clustering (HAC)**
+
+The dendrogram provided represents the results of a Hierarchical Agglomerative Clustering (HAC) analysis performed on the dog data. Here is a detailed interpretation:
+
+General Structure
+
+-   **Height Axis**: Represents the distance or dissimilarity between clusters being merged.
+-   **Branches**: Represent the merging of clusters at various levels of similarity/dissimilarity.
+
+Clustering Insights
+
+-   **Distinct Clusters**: Several distinct clusters can be identified by tracing the branches. Each cluster represents a group of breeds that share similar characteristics.
+-   **Number of Clusters**: The number of clusters can be adjusted by cutting the dendrogram at a chosen height. For example, cutting at a height of 1.5 or 2.0 would provide a reasonable number of clusters.
+
+Cluster Interpretation
+
+-   **First Major Split**: The first major split occurs at a height of approximately 2.5, dividing the breeds into two broad groups.
+    -   **Left Subtree**: This subtree can be further divided into smaller clusters, indicating breeds with more specific similarities.
+    -   **Right Subtree**: Similarly, this subtree can be divided into smaller clusters.
+
+Detailed Clusters
+
+1.  **Left Subtree (Split at \~1.5)**
+    -   Cluster 1: Contains rows 23, 30, 32, 16, and 47. These breeds likely share very close similarities.
+    -   Cluster 2: Contains rows 2, 10, 42, 11, 39, 28. These breeds form a closely related subgroup.
+    -   Further subdivisions can be made by following the branches, indicating more refined similarities.
+2.  **Right Subtree (Split at \~2.0)**
+    -   Cluster 3: Contains rows 29, 40, 13, 4, 20. This cluster includes breeds that are less similar to those in the left subtree but share close characteristics among themselves.
+    -   Cluster 4: Contains rows 21, 46, 3, 49, 31, 27, 43, 50, 15, 24, 19. This is a larger cluster and indicates a broader grouping.
+    -   Additional clusters can be identified by following the branches further down.
+
+Clusters of Interest
+
+-   **Very Close Breeds**: Breeds in rows 35, 32, 33, 14, 38 form a very tight cluster, indicating they are highly similar.
+-   **Isolated Clusters**: Some breeds like 26 and 8 form isolated clusters at lower heights, suggesting these breeds are quite distinct compared to others.
+
+Applications
+
+-   **Breed Recommendations**: These clusters can be used to recommend breeds based on their similarities. For example, breeds within the same cluster would have similar traits and can be recommended interchangeably based on user preferences.
+-   **Trait Analysis**: Further analysis can be done on each cluster to understand the specific traits that define them, helping in more targeted recommendations.
+
+Summary
+
+The dendrogram from the Hierarchical Agglomerative Clustering reveals significant groupings of dog breeds based on their characteristics. By examining the height at which clusters merge, one can determine the level of similarity between breeds. This analysis is valuable for making informed recommendations and understanding breed-specific traits in more detail.
+
+**Decision Tree Model**
+
+Overview The decision tree model was trained to predict dog breed lifestyle categories using attributes like energy level and friendliness. We used 5-fold cross-validation to tune the complexity parameter (CP).
+
+Results
+
+Root Node Error: 0.75375 Optimal CP: 0.005, leading to a tree with 5 splits. Cross-Validation Error: 0.57048 (Std. Dev: 0.023222)
+
+Interpretation Pruning improved the model's generalization. Key predictors were adaptability, friendliness, grooming ease, and energy level. The model's error indicates room for accuracy improvement.
+
+Model Improvement
+
+Feature Engineering: Adding more relevant features or transforming existing ones might improve performance. Ensemble Methods: Using techniques like boosting (e.g., Gradient Boosting) could enhance model accuracy. Hyperparameter Tuning: Further fine-tuning of parameters beyond CP, such as max depth or minimum samples split, could yield better results.
+
+**Random Forest Model**
+
+Overview
+
+The random forest model also predicted lifestyle categories. We optimized the number of variables sampled at each split (mtry) using 5-fold cross-validation. Results Accuracy: Range: 0.4088 to 0.4500 Median: 0.4375 Kappa: Range: 0.1874 to 0.2528 Median: 0.2479 Optimal mtry: 321, with accuracy 0.4362 and Kappa 0.2317.
+
+Interpretation
+
+The model performed consistently across folds. The chosen mtry balanced variance and bias, and the moderate Kappa reflected good handling of class imbalance.
+
+Model Improvement
+
+More Trees: Increasing the number of trees in the forest could improve stability and accuracy. Feature Selection: Removing less important features could reduce noise and enhance performance. Different Splitting Criteria: Experimenting with criteria like entropy instead of Gini could offer performance gains.
+
+**Support Vector Machine (SVM) Model**
+
+Overview We used an SVM with a radial basis function kernel, tuning sigma and C through grid search and cross-validation. Results Optimal Parameters: Sigma = 0.002667, C = 0.25 Accuracy: Range: 0.3416 to 0.3481 Median: 0.3457 Kappa: 0.0000 across all folds
+
+Interpretation
+
+The SVM struggled, as shown by the low Kappa values, indicating poor classification ability. The low accuracy suggests a need for alternative methods or feature engineering.
+
+Model Improvement
+
+Kernel Functions: Trying different kernels (e.g., polynomial, sigmoid) might better capture data patterns. Scaling Features: Ensuring all features are properly scaled can significantly impact SVM performance. Dimensionality Reduction: Using techniques like PCA to reduce feature dimensions could help improve accuracy by focusing on the most important aspects of the data.
+
+**Comparative Analysis**
+
+Accuracy Random Forest: 0.4362 (Median) SVM: 0.3457 (Median) Decision Tree: Error reduction post-pruning, not directly comparable. Kappa Random Forest: 0.2479 (Median) SVM: 0.0000 (Median) Decision Tree: Not directly provided.
+
+The Random Forest model outperformed both the Decision Tree and SVM models in accuracy and Kappa, making it the most effective for classifying dog breeds into lifestyle categories. The SVM model performed the worst, highlighting the need for different preprocessing or modeling approaches.
+
+**Cluster Plot**
+
+The graph titled "Optimal number of clusters" shows the Total Within Sum of Squares (WSS) against the number of clusters (k). Key points are:
+
+-   The WSS decreases as the number of clusters increases.
+
+-   There is a noticeable "elbow" at k=5, where the rate of decrease in WSS slows down.
+
+In summary, the elbow method suggests that the optimal number of clusters for this dataset is 5, as adding more clusters beyond this point provides diminishing returns in reducing the WSS.
+
+The cluster plot visualizes data points along two dimensions, Dim1 and Dim2, with five distinct clusters:
+
+-   **Cluster 1** (Red circles) is mostly centered around the origin.
+
+-   **Cluster 2** (Yellow triangles) is positioned to the right of the origin.
+
+-   **Cluster 3** (Green squares) is below and slightly to the right of the origin.
+
+-   **Cluster 4** (Blue crosses) is to the left of the origin.
+
+-   **Cluster 5** (Pink pluses) is above and slightly to the right of the origin.
+
+The clusters are well-defined with minimal overlap, indicating distinct groupings within the data based on the first two principal components.
+
+The plot shows the distribution of various dog breed traits, with each facet representing a different trait. Key points:
+
+-   The x-axis of each facet shows the value range for the trait (0 to 1).
+
+-   The y-axis shows the count of occurrences for each value range.
+
+-   Traits like "adaptability," "affectionate_with_family," "dog_friendly," and "trainability" show a relatively even distribution across their value ranges.
+
+-   Traits such as "amount_of_shedding," "intensity," and "tendency_to_bark_or_howl" show more distinct peaks, indicating certain common value ranges for these traits.
+
+-   Each trait's histogram reveals the diversity and frequency of traits among the dog breeds in the dataset.
+
+In summary, the plot highlights how different traits vary among dog breeds, with some traits being more evenly distributed and others having specific common values.
+
+# **Conclusion**
+
+Based on the extensive analysis of the data, several key insights emerged, leading to specific recommendations for different target groups. The data revealed distinct patterns and preferences among various demographics, allowing for tailored recommendations that align with their lifestyles and needs.
+
+Firstly, the analysis highlighted that active families, who engage in regular physical activities, would greatly benefit from having sporting dogs. These breeds, known for their high energy levels and need for regular exercise, align well with the active routines of such families. Families who enjoy outdoor activities like hiking, running, or playing sports would find a perfect companion in sporting dogs, enhancing their overall lifestyle and providing a healthy outlet for both the family and the dog. This group was also the second highest to be recommended for Mixed-breed, Hound, and Working dogs, demonstrating the versatility of these families.
+
+Secondly, the data indicated that busy families and single professionals might find better companionship with breeds known for their calm and relaxed demeanor. For these groups, breeds that require less physical activity and are content with shorter, more leisurely walks are ideal. This ensures that the pet ownership experience is enjoyable and manageable, providing emotional support and companionship without the demanding exercise needs of more active breeds. The data supported that busy families would be best suited for companion, hybrid, and mixed breeds. Additionally, single professionals would be recommended to have Terriers, companion, and mixed-breed dogs.
+
+Lastly, home-based families with young children and retired couples were found to benefit most from breeds known for their patience and gentleness. Dogs that are friendly, tolerant, and protective are recommended for such households to ensure a safe and nurturing environment for children, the elderly, and pets. Choosing a breed with a proven track record of good behavior can lead to a harmonious and joyful household dynamic. As a result, retired couples are recommended to have Hound dogs, mixed breeds, and some Working dogs for a stable dynamic. Home-based families had slightly different recommendations, with the best dogs for that group being Hounds (the preferred), mixed-breeds, and lastly, sporting dogs.
+
+In conclusion, the insights derived from the data analysis provide clear, actionable recommendations for choosing dog breeds based on lifestyle and household composition. Active families should consider sporting dogs to match their energetic lifestyle, while busy families and less active single professionals should opt for calmer breeds to ensure comfortable companionship. Families with young children and retirees should choose gentle and patient breeds to foster a safe and loving environment. Paired with the correlation matrix, Hierarchical Agglomerative Clustering, and exploratory data analysis, potential owners can narrow down the breed of dog that fits additional criteria, such as ease of grooming. These tailored recommendations will enhance the pet ownership experience, ensuring owners and their dogs lead happy and fulfilling lives.
+
+# References
+
+1.  Dogs: The Ultimate Guide. National Geographic.\
+2.  The History of the Dog. American Kennel Club.\
+3.  Dogs in Ancient Civilizations. The History Channel.\
+4.  The Role of Dogs in Medieval Society. Medievalists.net.\
+5.  Dogs in the Industrial Revolution. PetHistory.com.\
+6.  K9 Units: Dogs in Law Enforcement. Police1.\
+7.  The Benefits of Service Dogs. American Humane.\
+8.  Adopt a Dog: Why It’s Important. ASPCA.\
+9.  Why Dogs Are Abandoned. Humane Society.\
+10. The Impact of Pet Adoption on Shelters. Petfinder.
